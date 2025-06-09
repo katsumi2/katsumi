@@ -1,0 +1,117 @@
+import streamlit as st
+import pandas as pd
+import random
+import folium
+from streamlit_folium import folium_static
+
+# --- 1. データの読み込み ---
+@st.cache_data # データ読み込みをキャッシュして高速化
+def load_data():
+    df = pd.read_csv('kosugi_spots.csv')
+    return df
+
+df_spots = load_data()
+
+# --- 2. フィルタリングロジック ---
+def recommend_spots(df, mood_input, duration_input, who_with_input):
+    filtered_df = df.copy()
+
+    # 気分によるフィルタリング
+    if mood_input and mood_input != "こだわらない":
+        filtered_df = filtered_df[filtered_df['mood'].str.contains(mood_input, na=False)]
+
+    # 滞在時間によるフィルタリング (例: ユーザーの滞在時間より短いか同程度のスポット)
+    if duration_input and duration_input != "こだわらない":
+        if duration_input == "1時間以内":
+            filtered_df = filtered_df[filtered_df['duration_min'] <= 60]
+        elif duration_input == "2時間以内":
+            filtered_df = filtered_df[filtered_df['duration_min'] <= 120]
+        elif duration_input == "半日（約4時間）":
+            filtered_df = filtered_df[filtered_df['duration_min'] <= 240]
+        elif duration_input == "一日（4時間以上）":
+            # この場合は、提案されるスポットの組み合わせで対応することを想定
+            # ここではシンプルにduration_minが設定されているもののみを対象とする
+            filtered_df = filtered_df[filtered_df['duration_min'] > 0]
+
+
+    # 誰と行くかによるフィルタリング
+    if who_with_input and who_with_input != "こだわらない":
+        filtered_df = filtered_df[filtered_df['who_with'].str.contains(who_with_input, na=False)]
+
+    # 提案数が多い場合はランダムに選択（最大3件程度）
+    if len(filtered_df) > 3:
+        return filtered_df.sample(n=3, random_state=random.randint(0, 1000))
+    return filtered_df
+
+# --- 3. Streamlit UI ---
+
+st.set_page_config(
+    page_title="小杉「今日どこ行く？」AIコンシェルジュ",
+    page_icon="✨",
+    layout="wide"
+)
+
+st.title("✨ 小杉「今日どこ行く？」AIコンシェルジュ")
+st.write("あなたの今日の気分に合わせて、小杉町のおすすめスポットをご提案します！")
+
+# --- ユーザー入力セクション ---
+st.header("今日の気分を教えてください")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    mood_options = ["こだわらない", "のんびり", "美味しいもの", "買い物", "散策", "景色", "体を動かす", "アクティブ"]
+    selected_mood = st.selectbox("どんな気分？", mood_options)
+
+with col2:
+    duration_options = ["こだわらない", "1時間以内", "2時間以内", "半日（約4時間）", "一日（4時間以上）"]
+    selected_duration = st.selectbox("滞在時間は？", duration_options)
+
+with col3:
+    who_with_options = ["こだわらない", "一人で", "家族と", "友人と", "カップルで"]
+    selected_who_with = st.selectbox("誰と行く？", who_with_options)
+
+if st.button("おすすめスポットを提案！"):
+    st.subheader("あなたへのおすすめスポット！")
+
+    # 推薦ロジックを実行
+    recommended_df = recommend_spots(df_spots, selected_mood, selected_duration, selected_who_with)
+
+    if not recommended_df.empty:
+        # 地図の初期化 (小杉町の中心あたり)
+        m = folium.Map(location=[36.75, 137.10], zoom_start=12)
+
+        for index, row in recommended_df.iterrows():
+            st.write(f"### {row['name']}")
+            st.write(f"**カテゴリ**: {row['category']}")
+            st.write(f"**おすすめポイント**: {row['description']}")
+            st.write(f"**住所**: {row['address']}")
+            if pd.notna(row['url']):
+                st.markdown(f"[詳しくはこちら]({row['url']})", unsafe_allow_html=True)
+
+            if pd.notna(row['image_path']) and row['image_path'] != '':
+                try:
+                    st.image(row['image_path'], caption=row['name'], width=300)
+                except FileNotFoundError:
+                    st.warning(f"画像ファイルが見つかりません: {row['image_path']}")
+
+            # 地図にマーカーを追加
+            if pd.notna(row['lat']) and pd.notna(row['lon']):
+                folium.Marker(
+                    [row['lat'], row['lon']],
+                    popup=row['name'],
+                    tooltip=row['name']
+                ).add_to(m)
+
+            st.markdown("---") # 区切り線
+
+        st.subheader("おすすめスポットの地図")
+        folium_static(m) # Streamlitでfoliumマップを表示
+
+    else:
+        st.info("ご希望に沿うスポットが見つかりませんでした。条件を変えて再度お試しください！")
+
+st.markdown("""
+---
+Created with ❤️ for Imizu, Toyama
+""")
